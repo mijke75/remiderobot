@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robbie de Robot Chat</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        #status, #output, #response { margin-top: 20px; }
+        #listeningIndicator {
+            width: 20px; height: 20px; border-radius: 50%; 
+            background-color: gray; display: inline-block; margin-left: 10px;
+        }
+        .listening { background-color: red; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+    <h1>Praat met Robbie de Robot</h1>
+    <button id="startButton">Start Praten</button>
+    <button id="stopButton" disabled>Stop Luisteren</button>
+    <div id="status">Niet aan het luisteren</div>
+    <div id="listeningIndicator"></div>
+    <div id="output"></div>
+    <div id="response"></div>
+
+    <script>
+const API_KEY = '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';
+        const API_URL = 'https://api.anthropic.com/v1/chat/completions';
+
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const output = document.getElementById('output');
+        const status = document.getElementById('status');
+        const response = document.getElementById('response');
+        const listeningIndicator = document.getElementById('listeningIndicator');
+
+        if ('webkitSpeechRecognition' in window) {
+            const recognition = new webkitSpeechRecognition();
+            recognition.lang = 'nl-NL';
+            recognition.interimResults = true;
+            recognition.continuous = true;
+
+            let finalTranscript = '';
+            let silenceTimer;
+            const silenceDelay = 1000; // 1 seconde stilte voordat we stoppen
+
+            startButton.addEventListener('click', startListening);
+            stopButton.addEventListener('click', stopListening);
+
+            function startListening() {
+                finalTranscript = '';
+                recognition.start();
+            }
+
+            function stopListening() {
+                recognition.stop();
+                clearTimeout(silenceTimer);
+            }
+
+            function resetSilenceTimer() {
+                clearTimeout(silenceTimer);
+                silenceTimer = setTimeout(() => {
+                    console.log('Stilte gedetecteerd, stoppen met luisteren');
+                    stopListening();
+                }, silenceDelay);
+            }
+
+            recognition.onstart = () => {
+                console.log('Spraakherkenning gestart');
+                status.textContent = 'Luisteren...';
+                startButton.disabled = true;
+                stopButton.disabled = false;
+                listeningIndicator.classList.add('listening');
+                resetSilenceTimer();
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                output.textContent = finalTranscript + interimTranscript;
+                resetSilenceTimer();
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Spraakherkenningsfout:', event.error);
+                status.textContent = `Fout: ${event.error}`;
+                resetUI();
+            };
+
+            recognition.onend = () => {
+                console.log('Spraakherkenning beëindigd');
+                status.textContent = 'Spraakherkenning beëindigd';
+                if (finalTranscript) {
+                    console.log('Finale transcriptie:', finalTranscript);
+                    sendToClaudeAPI(finalTranscript);
+                }
+                resetUI();
+            };
+
+            function resetUI() {
+                startButton.disabled = false;
+                stopButton.disabled = true;
+                listeningIndicator.classList.remove('listening');
+                clearTimeout(silenceTimer);
+            }
+
+        } else {
+            startButton.disabled = true;
+            stopButton.disabled = true;
+            status.textContent = 'Spraakherkenning wordt niet ondersteund in deze browser.';
+        }
+
+        async function sendToClaudeAPI(text) {
+            const systemMessage = `Je bent Robbie de Robot, een vrolijke en behulpzame robotvriend voor kinderen. 
+            Je praat op een eenvoudige, kindvriendelijke manier en bent altijd enthousiast om te helpen en nieuwe dingen te leren. 
+            Je houdt van grappige woordspelingen en raadsels, maar zorgt er altijd voor dat je antwoorden veilig en geschikt zijn voor kinderen. 
+            Als er iets gevraagd wordt wat je niet weet of niet geschikt is, zeg je op een vriendelijke manier dat je het niet weet of dat het misschien beter is om het aan een volwassene te vragen.`;
+
+            try {
+                const apiResponse = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': API_KEY,
+                        'anthropic-version': '2023-06-01'
+                    },
+                    body: JSON.stringify({
+                        model: "claude-3-opus-20240229",
+                        max_tokens: 1000,
+                        messages: [
+                            { role: "system", content: systemMessage },
+                            { role: "user", content: text }
+                        ]
+                    })
+                });
+
+                if (!apiResponse.ok) {
+                    throw new Error(`HTTP error! status: ${apiResponse.status}`);
+                }
+
+                const data = await apiResponse.json();
+                const claudeResponse = data.choices[0].message.content;
+                response.textContent = `Robbie: ${claudeResponse}`;
+                speakResponse(claudeResponse);
+            } catch (error) {
+                console.error('Er is een fout opgetreden bij het communiceren met Claude:', error);
+                response.textContent = "Sorry, ik kon je vraag niet beantwoorden. Probeer het later nog eens.";
+            }
+        }
+
+        function speakResponse(text) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'nl-NL';
+            speechSynthesis.speak(utterance);
+        }
+    </script>
+</body>
+</html>
